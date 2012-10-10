@@ -8,6 +8,7 @@ SET(CMAKE_CXX_FLAGS "-O2 -g -Wextra -pedantic")
 FIND_PACKAGE(Eigen3 REQUIRED)
 FIND_PACKAGE(GTest)
 FIND_PACKAGE(Boost COMPONENTS system random REQUIRED)
+FIND_PACKAGE(OpenCV REQUIRED)
 #FIND_PACKAGE(LBFGS REQUIRED)
 
 #SET(SPARSENN_SRC src/basic.c src/sparse_nn.c)
@@ -16,7 +17,7 @@ FIND_PACKAGE(Boost COMPONENTS system random REQUIRED)
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 #set the default path for built libraries to the "lib" directory
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
-set(NN_LIB_SRC src/nn.cpp src/optimization.cpp)
+set(NN_LIB_SRC src/nn.cpp src/optimization.cpp src/tools.cpp src/tools.cpp)
 
 INCLUDE_DIRECTORIES(include)
 INCLUDE_DIRECTORIES(${EIGEN3_INCLUDE_DIR})
@@ -29,7 +30,7 @@ IF (GTEST_FOUND)
   include_directories(${GTEST_INCLUDE_DIR})
   
   add_executable(test_nn test/test_nn.cpp)
-  target_link_libraries(test_nn ${GTEST_LIBRARIES} nn ${Boost_RANDOM_LIBRARY} pthread)
+  target_link_libraries(test_nn ${GTEST_LIBRARIES} nn ${Boost_RANDOM_LIBRARY} opencv_core opencv_highgui pthread)
  # add_executable(test_rvm tests/rvm_test.cpp)
  # target_link_libraries(test_rvm ${GTEST_LIBRARIES})
   

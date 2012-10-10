@@ -46,32 +46,35 @@ namespace neural {
     //std::cout << "update_rprop" << std::endl;
     for (size_t l = 0; l < net.layers.size(); ++l)
       {
-        Eigen::MatrixXd &weights = net.layers[l].weights;
-        Eigen::MatrixXd &weights_deriv = net.layers[l].weights_deriv;
+        Eigen::MatrixXd &weights = *(net.layers[l].weights);
+        Eigen::MatrixXd &weights_deriv = *(net.layers[l].weights_deriv);
         Eigen::MatrixXd &lweights_deriv = last_gradients[l].first;
         Eigen::MatrixXd &weights_step = stepwidth[l].first;
-        Eigen::VectorXd &bias = net.layers[l].bias;
-        Eigen::VectorXd &bias_deriv = net.layers[l].bias_deriv;
+        Eigen::VectorXd &bias = *(net.layers[l].bias);
+        Eigen::VectorXd &bias_deriv = *(net.layers[l].bias_deriv);
         Eigen::VectorXd &lbias_deriv = last_gradients[l].second;
         Eigen::VectorXd &bias_step = stepwidth[l].second;
 
-        for (int i = 0; i < weights.rows(); ++i)
-          for (int j = 0; j < weights.cols(); ++j)
-            {
-              if (weights_deriv(i,j) == 0.)
-                continue;
-              double sign = (weights_deriv(i,j) > 0) ? -1. : 1.;
-              // std::cout << "dweight (" << i << "," << j << ") = " << weights_deriv(i,j) << std::endl;
-              if (weights_deriv(i,j) * lweights_deriv(i,j) < 0)
+        if (!net.layers[l].is_shared_copy) 
+          {
+            for (int i = 0; i < weights.rows(); ++i)
+              for (int j = 0; j < weights.cols(); ++j)
                 {
-                  weights_step(i,j) *= rprop::RPROP_NEG;
+                  if (weights_deriv(i,j) == 0.)
+                    continue;
+                  double sign = (weights_deriv(i,j) > 0) ? -1. : 1.;
+                  // std::cout << "dweight (" << i << "," << j << ") = " << weights_deriv(i,j) << std::endl;
+                  if (weights_deriv(i,j) * lweights_deriv(i,j) < 0)
+                    {
+                      weights_step(i,j) *= rprop::RPROP_NEG;
+                    }
+                  else
+                    {
+                      weights_step(i,j) *= rprop::RPROP_POS;
+                    }
+                  weights(i,j) += sign * weights_step(i,j);
                 }
-              else
-                {
-                  weights_step(i,j) *= rprop::RPROP_POS;
-                }
-              weights(i,j) += sign * weights_step(i,j);
-            }
+          }
         for (int i = 0; i < bias.size(); ++i)
           {
             if (bias_deriv(i) == 0.)
@@ -88,7 +91,8 @@ namespace neural {
             bias(i) += sign * bias_step(i);
           }
         //std::cout << weights_deriv << std::endl << std::endl;
-        lweights_deriv = weights_deriv;
+        if (!net.layers[l].is_shared_copy) 
+          lweights_deriv = weights_deriv;
         //std::cout << lweights_deriv << std::endl;
         lbias_deriv = bias_deriv;
         net.layers[l].clearGrad();

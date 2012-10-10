@@ -69,8 +69,8 @@ namespace neural {
     // copy network parameters
     for (size_t i = 0; i < net.layers.size(); ++i)
     {
-      param_copy[i].first = net.layers[i].weights;
-      param_copy[i].second = net.layers[i].bias;
+      param_copy[i].first = *net.layers[i].weights;
+      param_copy[i].second = *net.layers[i].bias;
     }
 
     // run through the data and do one update step
@@ -94,8 +94,8 @@ namespace neural {
     // and copy back the parameters
     for (size_t i = 0; i < net.layers.size(); ++i)
     {
-      net.layers[i].weights = param_copy[i].first;
-      net.layers[i].bias = param_copy[i].second;
+      *net.layers[i].weights = param_copy[i].first;
+      *net.layers[i].bias = param_copy[i].second;
     }
 
     return lval;

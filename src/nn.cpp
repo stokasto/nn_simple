@@ -2,8 +2,10 @@
 
 namespace neural {
 
-  nn_layer::nn_layer(int idim, int odim, enum ACT_TYPE type)
+  nn_layer::nn_layer(int idim, int odim, enum ACT_TYPE type, Eigen::VectorXd *b, Eigen::VectorXd *bd, Eigen::MatrixXd *w, Eigen::MatrixXd *wd, bool shared, bool trans, int shared_with)  : bias(b), bias_deriv(bd), weights(w), weights_deriv(wd)
   {
+    is_shared_copy = shared;
+    is_trans = trans;
     reset(idim, odim, type);
   }
 
@@ -13,10 +15,13 @@ namespace neural {
     input_dim = idim;
     output_dim = odim;
     decay = 0.;
-    bias.setZero(odim);
-    weights.setZero(odim, idim);
-    bias_deriv.setZero(odim);
-    weights_deriv.setZero(odim, idim);
+    bias->setZero(odim);
+    bias_deriv->setZero(odim);
+    if (!is_shared_copy)
+      {
+        weights->setZero(odim, idim);
+        weights_deriv->setZero(odim, idim);
+      }
     activation_type = type;
     // this can be set to update the bias more conservatively
     bias_supression = false;
@@ -24,17 +29,19 @@ namespace neural {
   }
   
   struct nn_layer &
-  nn_layer::initRandom()
+  nn_layer::initRandom(boost::mt19937 &rng)
   {
-    static boost::mt19937 rng; // We could set a seed here
     boost::normal_distribution<> nd(0.0, 1.0);
     boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > var_nor(rng, nd);
-    bias.setZero(output_dim);
-    for (int n = 0; n < weights.rows(); ++n)
-      for (int w = 0; w < weights.cols(); ++w)
-        {
-          weights(n, w) = var_nor();
-        }
+    bias->setZero(output_dim);
+    if (! is_shared_copy)
+      {
+        for (int n = 0; n < weights->rows(); ++n)
+          for (int w = 0; w < weights->cols(); ++w)
+            {
+              (*weights)(n, w) = var_nor();
+            }
+      }
     return *this;
   }
 
@@ -47,14 +54,22 @@ namespace neural {
   void
   nn_layer::clearGrad()
   {
-    weights_deriv.setZero();
-    bias_deriv.setZero();
+    if (!is_shared_copy)
+      weights_deriv->setZero();
+    bias_deriv->setZero();
   }
 
   void
   nn_layer::forward_pass(const Eigen::VectorXd &x, Eigen::VectorXd &y)
   {
-    y = weights * x + bias;
+    if (!is_trans)
+      {
+        y = (*weights) * x + (*bias);
+      }
+    else // use transpose of weights
+      {
+        y = weights->transpose() * x + (*bias);
+      }
     for (int i = 0; i < output_dim; ++i)
       {
         switch (activation_type)
@@ -84,10 +99,21 @@ namespace neural {
   void 
   nn_layer::calc_derivative(Eigen::VectorXd &err, const Eigen::VectorXd &x, const Eigen::VectorXd &activation, const Eigen::VectorXd dEdxi)
   {
-    weights_deriv += dEdxi * x.transpose();
-    weights_deriv += decay * weights;
-    bias_deriv += dEdxi;
-    err = weights.transpose() * dEdxi;
+    if (!is_trans) 
+      {
+        (*weights_deriv) += dEdxi * x.transpose();
+        (*weights_deriv) += decay * (*weights);
+        err = weights->transpose() * dEdxi;
+      }
+    else
+      {
+        (*weights_deriv) += (dEdxi * x.transpose()).transpose();
+        // do not apply weight decay twice!
+        //(*weights_deriv) += decay * (*weights);
+        err = (*weights) * dEdxi;
+      }
+
+    *bias_deriv += dEdxi;
   }
   
   void
@@ -104,7 +130,10 @@ namespace neural {
         dEdxi = err.array() * (1. + activation.array()) * (1. - activation.array());
         break;
       case RECT:
-        tmp_act = weights * x + bias;
+        if (!is_trans)
+          tmp_act = (*weights) * x + (*bias);
+        else
+          tmp_act = weights->transpose() * x + (*bias);
         dEdxi.resize(tmp_act.size());
         for (int i = 0; i < tmp_act.size(); ++i) 
           {
@@ -125,18 +154,20 @@ namespace neural {
   void
   nn_layer::update(const double lrate)
   {
-    weights -= lrate * weights_deriv;
+    if (!is_shared_copy)
+      (*weights) -= lrate * (*weights_deriv);
     if (bias_supression)
-      bias -= lrate * 0.01 * bias_deriv;
+      (*bias) -= lrate * 0.01 * (*bias_deriv);
     else
-      bias -= lrate * bias_deriv;
+      (*bias) -= lrate * (*bias_deriv);
   }
 
   void
   nn_layer::update(const std::pair<Eigen::MatrixXd, Eigen::VectorXd> &delta)
   {
-    weights -= delta.first;
-    bias -= delta.second;
+    if (!is_shared_copy)
+      (*weights) -= delta.first;
+    (*bias) -= delta.second;
   }
 
   bool
@@ -146,13 +177,19 @@ namespace neural {
     out.write((char *) (&input_dim), sizeof(int));
     out.write((char *) (&output_dim), sizeof(int));
     out.write((char *) (&atype_i), sizeof(int));
+    out.write((char*) (&is_shared_copy), sizeof(bool));
+    out.write((char*) (&shared_with), sizeof(int));
+    out.write((char*) (&is_trans), sizeof(bool));
     out.write((char *) (&decay), sizeof(double));
     out.write((char *) (&bias_supression), sizeof(bool));
 
-    for (int i = 0; i < bias.size(); ++i)
-      out.write((char*) (&(bias(i))), sizeof(double));
-    for (int i = 0; i < weights.size(); ++i)
-      out.write((char*) (&(weights(i))), sizeof(double));
+    for (int i = 0; i < bias->size(); ++i)
+      out.write((char*) (&((*bias)(i))), sizeof(double));
+    if (!is_shared_copy)
+      {
+        for (int i = 0; i < weights->size(); ++i)
+          out.write((char*) (&((*weights)(i))), sizeof(double));
+      }
     return true;
   }
 
@@ -165,10 +202,13 @@ namespace neural {
     in.read((char*) (&decay), sizeof(double));
     in.read((char*) (&bias_supression), sizeof(bool));
 
-    for (int i = 0; i < bias.size(); ++i)
-      in.read((char*) (&(bias(i))), sizeof(double));
-    for (int i = 0; i < weights.size(); ++i)
-      in.read((char*) (&(weights(i))), sizeof(double));
+    for (int i = 0; i < bias->size(); ++i)
+      in.read((char*) (&((*bias)(i))), sizeof(double));
+    if (!is_shared_copy)
+      {
+        for (int i = 0; i < weights->size(); ++i)
+          in.read((char*) (&((*weights)(i))), sizeof(double));
+      }
     return true;
   }
 
@@ -177,24 +217,64 @@ namespace neural {
     ltype = SQR;
   }
 
-  nn::nn(std::vector<int> &dimensions, std::vector<enum ACT_TYPE> &acttype)
+  nn::nn(std::vector<int> &dimensions, std::vector<enum ACT_TYPE> &acttype, std::vector<int> &shared)
   {
     assert(dimensions.size() == acttype.size() + 1);
     ltype = SQR;
-    activations.push_back(Eigen::VectorXd(dimensions[0]));
+    int idim = dimensions[0];
+    int odim = dimensions[1];
+    activations.push_back(Eigen::VectorXd(idim));
     for (size_t l = 0; l < acttype.size(); ++l)
       {
-        layers.push_back(nn_layer(dimensions[l], dimensions[l+1], acttype[l]));
-        activations.push_back(Eigen::VectorXd(dimensions[l+1]));
+        idim = dimensions[l];
+        odim = dimensions[l+1];
+        int shared_with = shared[l];
+        // biases are newer shared right now!
+        biases.push_back(new Eigen::VectorXd(odim));
+        biases_deriv.push_back(new Eigen::VectorXd(odim));
+        if (shared_with == -1) 
+          {
+            weights.push_back(new Eigen::MatrixXd(odim, idim));
+            weights_deriv.push_back(new Eigen::MatrixXd(odim, idim));
+            layers.push_back(nn_layer(idim, odim, acttype[l], biases.back(), biases_deriv.back(), weights.back(), weights_deriv.back()));
+          }
+        else
+          {
+            assert(shared_with < int(weights.size()));
+            // for now assume shared weights are always used as transpose
+            layers.push_back(nn_layer(idim, odim, acttype[l], biases.back(), biases_deriv.back(), weights[shared_with], weights_deriv[shared_with], true, true, shared_with));
+          }
+        activations.push_back(Eigen::VectorXd(odim));
       }
   }
 
-  struct nn &
-  nn::initRandom()
+  nn::~nn() 
   {
+    for (size_t i = 0; i < biases.size(); ++i)
+      delete biases[i];
+    biases.clear();
+    for (size_t i = 0; i < biases_deriv.size(); ++i)
+      delete biases_deriv[i];
+    biases_deriv.clear();
+    for (size_t i = 0; i < weights.size(); ++i)
+      delete weights[i];
+    weights.clear();
+    for (size_t i = 0; i < weights_deriv.size(); ++i)
+      delete weights_deriv[i];
+    weights_deriv.clear();
+  }
+
+  struct nn &
+  nn::initRandom(int seed)
+  {
+    boost::mt19937 rng; 
+    if (seed == -1)
+      rng.seed(static_cast<unsigned int>(time(0)));
+    else
+      rng.seed(static_cast<unsigned int>(seed));
     for (size_t l = 0; l < layers.size(); ++l)
       {
-        layers[l].initRandom();
+        layers[l].initRandom(rng);
       }
     return *this;
   }
@@ -297,13 +377,6 @@ namespace neural {
   {
     for (size_t l = 0; l < layers.size(); ++l)
       {
-        /*
-          std::cout << "lrate: " << lrate << std::endl;
-          std::cout << "output: " << activations[l+1] << std::endl;
-          std::cout << "updating with gradient: " << layers[l].weights_deriv << std::endl;
-          std::cout << "bias_deriv: " << layers[l].bias_deriv << std::endl;
-          std::cout << "weights: " << layers[l].weights << std::endl;
-        */
         layers[l].update(lrate);
         layers[l].clearGrad();
       }
@@ -359,13 +432,33 @@ namespace neural {
     for (int l = 0; l < num_layers; ++l)
       {
         int idim, odim, atype_i;
+        std::string name;
+        bool shared, trans;
+        int shared_with;
         in.read((char*) (&idim), sizeof(int));
         in.read((char*) (&odim), sizeof(int));
         in.read((char*) (&atype_i), sizeof(int));
+        in.read((char*) (&shared), sizeof(bool));
+        in.read((char*) (&shared_with), sizeof(int));
+        in.read((char*) (&trans), sizeof(bool));
         if (l == 0)
           activations.push_back(Eigen::VectorXd(idim));
         activations.push_back(Eigen::VectorXd(odim));
-        layers.push_back(nn_layer(idim, odim, (ACT_TYPE)atype_i));
+        // biases are not shared right now!
+        biases.push_back(new Eigen::VectorXd(odim));
+        biases_deriv.push_back(new Eigen::VectorXd(odim));
+        if (!shared) 
+          {
+            weights.push_back(new Eigen::MatrixXd(odim,idim));
+            weights_deriv.push_back(new Eigen::MatrixXd(odim, idim));
+            layers.push_back(nn_layer(idim, odim, (ACT_TYPE)atype_i, biases.back(), biases_deriv.back(), weights.back(), weights_deriv.back()));
+          }
+        else
+          {
+            if (shared_with >= int(weights.size()))
+              return false;
+            layers.push_back(nn_layer(idim, odim, (ACT_TYPE)atype_i, biases.back(), biases_deriv.back(), weights[shared_with], weights_deriv[shared_with], true, trans, shared_with));
+          }
         res &= layers.back().from_stream(in);
       }
     return res;
@@ -405,7 +498,11 @@ namespace neural {
     activations.push_back(Eigen::VectorXd(input_dim));
     activations.push_back(Eigen::VectorXd(1));
     // create one neuron with linear activation
-    layers.push_back(nn_layer(input_dim, 1, LINEAR));
+    biases.push_back(new Eigen::VectorXd(input_dim));
+    biases_deriv.push_back(new Eigen::VectorXd(input_dim));
+    weights.push_back(new Eigen::MatrixXd(1, input_dim));
+    weights_deriv.push_back(new Eigen::MatrixXd(1, input_dim));
+    layers.push_back(nn_layer(input_dim, 1, LINEAR, biases.back(), biases_deriv.back(), weights.back(), weights_deriv.back()));
     layers[0].setDecay(lambda);
     // update bias more conservatively
     layers[0].bias_supression = true;

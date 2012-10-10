@@ -82,20 +82,31 @@ namespace neural {
       std::cerr << "ERROR: unknown loss type: " << l << std::endl;
       res = 0.;
     }
-    // add weight decay error term if net is available
     if (net)
     {
+      // add weight decay error term if net is available
       for (size_t i = 0; i < net->layers.size(); ++i)
 	    {
 	      const nn_layer &layer = net->layers[i];
-	      for (int r = 0; r < layer.weights.rows(); ++r)
+        if (!layer.is_shared_copy)
         {
-          for (int c = 0; c < layer.weights.cols(); ++c)
+          for (int r = 0; r < layer.weights->rows(); ++r)
           {
-            res += 0.5 * layer.decay * SQR(layer.weights(r, c));
+            for (int c = 0; c < layer.weights->cols(); ++c)
+            {
+              res += 0.5 * layer.decay * SQR((*layer.weights)(r, c));
+            }
           }
         }
 	    }
+      // TODO also add sparsity constraint if wanted
+      /*
+      for (size_t i = 0; i < net->layers.size(); ++i)
+	    {
+	      const nn_layer &layer = net->layers[i];
+        res += layer.sparsity * std::fabs(net->activations[i+1].array().sum());
+	    }
+      */
     }
     return res;
   }
